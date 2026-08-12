@@ -6,10 +6,11 @@ def get_selected_car_platform(name: str):
   from opendbc.car.mazda.values import CAR as MAZDA
   from opendbc.car.volkswagen.values import CAR as VOLKSWAGEN
   from opendbc.car.tesla.values import CAR as TESLA
+  from opendbc.car.byd.values import CAR as BYD
 
-  platforms = [platform for brand in (FORD, GM, TOYOTA, HYUNDAI, MAZDA, VOLKSWAGEN) for platform in brand]
+  platforms = [platform for brand in (FORD, GM, TOYOTA, HYUNDAI, MAZDA, VOLKSWAGEN, BYD) for platform in brand]
   # Model X is intentionally dashcam-only. Model 3/Y have a CarController and
   # must be selectable even when automatic fingerprinting is unavailable.
   platforms.extend((TESLA.TESLA_MODEL_3, TESLA.TESLA_MODEL_Y))
 
-  return next((platform for platform in platforms for doc in platform.config.car_docs if name == doc.name), None)
+  return next((platform for platform in platforms for doc in platform.config.car_docs if name in (doc.name, str(platform))), None)
