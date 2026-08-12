@@ -73,7 +73,8 @@ class CarInterface(CarInterfaceBase):
     @staticmethod
     def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, experimental_long, is_release, docs) -> structs.CarParams: # type: ignore
         ret.brand = "byd"
-        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.byd)]
+        _safety = getattr(structs.CarParams.SafetyModel, 'byd', structs.CarParams.SafetyModel.noOutput)
+        ret.safetyConfigs = [get_safety_config(_safety)]
 
         ret.dashcamOnly = False
         #disable simple pt radar due to mpc solver issue in official OP. It works with carrot/sunny/forg.
