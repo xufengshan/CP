@@ -73,7 +73,7 @@ class CarInterface(CarInterfaceBase):
     @staticmethod
     def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, experimental_long, is_release, docs) -> structs.CarParams: # type: ignore
         ret.brand = "byd"
-        _safety = getattr(structs.CarParams.SafetyModel, 'byd', structs.CarParams.SafetyModel.noOutput)
+        _safety = structs.CarParams.SafetyModel.byd
         ret.safetyConfigs = [get_safety_config(_safety)]
 
         ret.dashcamOnly = False
