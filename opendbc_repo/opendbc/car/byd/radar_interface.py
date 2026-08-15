@@ -23,6 +23,17 @@ BYD Tang DM MRR 雷达 -- 增强版 (V001 硬解码 + V9/仓库原版 KF 距离�
 [V6 补充] b5 速度帧识别:
   b5=3 速度帧优先, 降级 b5=251 dist2 (V001 假定 sub2 是 vRel, 增强后更健壮)
 
+
+[V2 补充 2026-08-16 真车100%解码分析 byd_real_data_20260815]
+  位级逆向 (seg100 高速巡航 855帧/地址):
+  - 距离 = 单字节 dat[3] (corr=1.00), 排除 16bit 编码 (byte2<<8|byte3 corr=0.06)
+  - byte[1] = 16进制滚动码 (步长17, 值0/17/34/.../255, 低4位0-15递增循环), 4子地址共享
+  - 0x380 尾帧: byte[5]=0x80, byte[6]=0, byte[7]=28恒定; byte[2]=0x74-0x78缓变(时间戳/精度)
+  - 0x382 的 b5=3 速度帧极少(1/855), 速度帧集中在 0x381/0x385; 0x382 byte[3]=250 高频
+  - slot结构: slot0(0x380)主目标+slot1(0x384)第二目标(距离比1.58x), slot2/3(0x388/0x38C)空闲
+  - 静止时雷达几乎不测距 (seg0 仅5帧有效), 行驶中正常 (641帧) ← ARS4xx 特性
+  - 纵向 lead 主要来自视觉(modelV2), 雷达目标仅辅助 (radard lead radar来源=0)
+
 基于 2026-08-11 多版本分析补写 (用户: "汇总优点, 编写雷达文件补充")
 """
 
@@ -42,6 +53,23 @@ _YREL_CLIP = (-5.0, 5.0)
 # 多段真车数据(段1/2/3)跨段一致, corr 0.63-0.85, 分箱单调22→102m
 DREL_COEF = 0.4244
 DREL_INTERCEPT = 17.79
+
+
+# --- V2: byte[1] 16进制滚动码校验 (真车逆向 2026-08-16) ---
+# 0x380-0x383 4子地址 byte[1] 同步: 值0/17/34/.../255 (步长17), 低4位0-15递增循环
+# 用于过滤杂帧/错位帧, 保证同一条雷达消息的4组数据来自同一帧
+def _check_rollcode(frames: dict) -> bool:
+    """校验 4 子地址 byte[1] 低4位滚动码一致 (0-15循环)"""
+    if not frames:
+        return False
+    codes = set()
+    for addr in (0x380, 0x381, 0x382, 0x383):
+        dat = frames.get(addr)
+        if dat is None or len(dat) < 2:
+            continue
+        codes.add(dat[1] & 0x0F)  # 低4位
+    # 至少2个子地址一致才认可 (正常4个全一致)
+    return len(codes) <= 2
 
 # --- V6: b5 帧类型定义 ---
 B5_SPEED = 3       # 速度帧: signed(b3) * 0.2778 m/s
@@ -106,36 +134,46 @@ def _decode_yrel(dat: bytes) -> float:
     return max(min(y, _YREL_CLIP[1]), _YREL_CLIP[0])
 
 
+
+def _signed_vrel(dat: bytes, byte_idx: int = 2) -> float:
+    """V3: vRel 符号位在 byte[2]&0x80 (真车逆向 2026-08-16)
+    速度帧 dat[3] 永远<128 是幅值(0x0E-0x3F), 真实正负号在 byte[2] 最高位:
+      byte[2]&0x80=0 → 正(前车远离/自车快), byte[2]&0x80=1 → 负(前车接近/自车慢)
+    旧 _signed(dat[3]) 丢失负号 (速度帧 dat[3]<128 恒正), 已修正
+    """
+    if len(dat) <= byte_idx:
+        return 0.0
+    mag = dat[3] * 0.2778
+    sign = -1.0 if (dat[byte_idx] & 0x80) else 1.0
+    return max(min(sign * mag, _VREL_CLIP[1]), _VREL_CLIP[0])
+
+
 def _decode_vrel(dat: bytes) -> float:
-    """sub2 帧 vRel（相对速度，±35 m/s，+=远离 -=靠近）"""
+    """sub2 帧 vRel（相对速度，±35 m/s，+=远离 -=靠近）
+    V3: 符号位在 byte[2]&0x80"""
     if len(dat) < 4:
         return 0.0
-    v = _signed(dat[3]) * 0.2778
-    return max(min(v, _VREL_CLIP[1]), _VREL_CLIP[0])
+    return _signed_vrel(dat)
 
 
 def _decode_vrel_speed(dat: bytes) -> float | None:
-    """V6: b5=3 速度帧 vRel。非速度帧返回 None"""
+    """V6+V3: b5=3 速度帧 vRel。非速度帧返回 None
+    V3: 符号位在 byte[2]&0x80 (真车逆向), 不再用 _signed(dat[3]) (速度帧dat[3]<128恒正丢符号)"""
     if len(dat) < 6:
         return None
     if dat[5] != B5_SPEED:
         return None
-    if len(dat) < 4:
-        return None
-    v = _signed(dat[3]) * 0.2778
-    return max(min(v, _VREL_CLIP[1]), _VREL_CLIP[0])
+    return _signed_vrel(dat)
 
 
 def _decode_vrel_dist2(dat: bytes) -> float | None:
-    """V6: b5=251 dist2 帧 vRel（降级源）"""
+    """V6+V3: b5=251 dist2 帧 vRel（降级源）
+    V3: 符号位在 byte[2]&0x80"""
     if len(dat) < 6:
         return None
     if dat[5] != B5_DISTANCE:
         return None
-    if len(dat) < 4:
-        return None
-    v = _signed(dat[3]) * 0.2778
-    return max(min(v, _VREL_CLIP[1]), _VREL_CLIP[0])
+    return _signed_vrel(dat)
 
 
 def _build_slot_map(records):
@@ -151,6 +189,9 @@ def _build_slot_map(records):
             seen_radar = True
             if len(dat) >= 8:
                 addr_dat[addr] = dat
+    # V2: 滚动码校验 — 4子地址 byte[1] 低4位应一致(同一帧), 不一致则丢弃该批(防杂帧)
+    if not _check_rollcode(addr_dat):
+        return {}, False
     slot_map = {}
     for s in SLOTS:
         base = s['base']
@@ -330,18 +371,22 @@ class RadarInterface(RadarInterfaceBase):
                 kf = self._kfs[sidx]
                 dt = ts - self._last_ts[sidx]
                 dt = max(0.01, min(dt, 0.2))
-                kf.adjust_noise(self.v_ego)
-                kf.predict(dt)
-                ok = kf.update(d, None)  # 1D 距离更新 (不用伪速度, 避免 V9 vRel 失真)
-                if not ok:
-                    kf.reject_count += 1
-                    if kf.reject_count > KF_RESET_CNT:
-                        kf.reset(d)
+                # V2: 低速(<11km/h)跳过KF避免静态失真, 高速才滤波 (真车验证: 静止/低速KF均值漂移1.74m)
+                if self.v_ego > 3.0:
+                    kf.adjust_noise(self.v_ego)
+                    kf.predict(dt)
+                    ok = kf.update(d, None)  # 1D 距离更新 (不用伪速度, 避免 V9 vRel 失真)
+                    if not ok:
+                        kf.reject_count += 1
+                        if kf.reject_count > KF_RESET_CNT:
+                            kf.reset(d)
+                    else:
+                        kf.reject_count = 0
+                    kf.limit_accel(dt)
+                    self._last_ts[sidx] = ts
+                    d = kf.d  # 用滤波后的距离
                 else:
-                    kf.reject_count = 0
-                kf.limit_accel(dt)
-                self._last_ts[sidx] = ts
-                d = kf.d  # 用滤波后的距离
+                    self._last_ts[sidx] = ts
 
             # ---- V6: vRel 优先 b5=3 速度帧, 降级 b5=251, 最后 V001 sub2 ----
             vrel_val = 0.0
