@@ -282,8 +282,8 @@ class SimpleKalmanFilter:
 
 class RadarInterface(RadarInterfaceBase):
 
-    def __init__(self, CP):
-        super().__init__(CP)
+    def __init__(self, CP, CP_SP=None):
+        super().__init__(CP, CP_SP)
         self.updated_messages = set()
         self._pts_cache = {}
         self._pts_not_seen = {}
@@ -371,11 +371,6 @@ class RadarInterface(RadarInterfaceBase):
             pt.dRel = d
             pt.yRel = _decode_yrel(sm['yRel']) if sm['yRel'] is not None else 0.0
             pt.vRel = vrel_val
-            pt.vLead = pt.vRel + self.v_ego
-            pt.aLead = 0.0  # CP纵向: radard 用 pt.aLead 估计前车加速度, 必须初始化
-            pt.aRel = float('nan')
-            pt.yvRel = 0.0
-            pt.measured = True
             track_count += 1
 
         # 过期清理（目标消失 NOT_SEEN_TIMEOUT 帧后移除）
