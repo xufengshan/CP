@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import time
 
 from typing import Any
 from multiprocessing import Queue
@@ -14,10 +15,6 @@ def create_bridge(dual_camera, high_quality):
 
   return queue, simulator_process, simulator_bridge
 
-def main():
-  _, simulator_process, _ = create_bridge(True, False)
-  simulator_process.join()
-
 def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between the simulator and openpilot.')
   parser.add_argument('--joystick', action='store_true')
@@ -31,17 +28,23 @@ if __name__ == "__main__":
 
   queue, simulator_process, simulator_bridge = create_bridge(args.dual_camera, args.high_quality)
 
-  if args.joystick:
-    # start input poll for joystick
-    from openpilot.tools.sim.lib.manual_ctrl import wheel_poll_thread
-
-    wheel_poll_thread(queue)
-  else:
-    # start input poll for keyboard
-    from openpilot.tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
-
-    keyboard_poll_thread(queue)
+  # Try to start keyboard/joystick input, but do NOT let a failure (e.g. no TTY
+  # when launched via nohup/ssh) shut down the bridge. If input is unavailable,
+  # just keep the simulator process alive so simulated_car keeps publishing CAN.
+  try:
+    if args.joystick:
+      from openpilot.tools.sim.lib.manual_ctrl import wheel_poll_thread
+      wheel_poll_thread(queue)
+    else:
+      from openpilot.tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
+      keyboard_poll_thread(queue)
+  except Exception as e:
+    print(f"[sim] input unavailable ({e}), running headless")
+    try:
+      while simulator_process.is_alive():
+        time.sleep(0.5)
+    except KeyboardInterrupt:
+      pass
 
   simulator_bridge.shutdown()
-
   simulator_process.join()
