@@ -337,7 +337,7 @@ class SimpleKalmanFilter:
 class RadarInterface(RadarInterfaceBase):
 
     def __init__(self, CP, CP_SP=None):
-        super().__init__(CP, CP_SP)
+        super().__init__(CP)
         self.updated_messages = set()
         self._pts_cache = {}
         self._pts_not_seen = {}
