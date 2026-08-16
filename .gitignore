@@ -106,3 +106,10 @@ Pipfile
 .history
 .ionide
 .vs
+
+# --- BYD 移植工作区忽略规则 (2026-08-16) ---
+*.bak
+*.bak_*
+__pycache__/
+*.pyc
+
