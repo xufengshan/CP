@@ -51,6 +51,7 @@ BYD Tang DM MRR 雷达 -- 增强版 (V001 硬解码 + V9/仓库原版 KF 距离�
 """
 
 import numpy as np
+from collections import deque
 from opendbc.car.interfaces import RadarInterfaceBase
 from opendbc.car.structs import RadarData
 
@@ -345,6 +346,9 @@ class RadarInterface(RadarInterfaceBase):
         self._kfs = {}
         self._vrel_lpfs = {}
         self._last_ts = {}
+        # 2026-08-17: dRel 差分 vRel + measured/vLead 修复
+        self._last_drel = {}   # sidx -> 最近滤波后 dRel (m)
+        self._vrel_hist = {}   # sidx -> deque 差分 vRel (中值滤波)
 
     def _vrel_tau(self) -> float:
         """V9: vRel LPF tau 按自车速度分级"""
@@ -401,23 +405,19 @@ class RadarInterface(RadarInterfaceBase):
                 else:
                     self._last_ts[sidx] = ts
 
-            # ---- V6: vRel 优先 b5=3 速度帧, 降级 b5=251, 最后 V001 sub2 ----
+            # ---- 2026-08-17: vRel 改用 dRel 时间差分 + 中值滤波 ----
+            # (彻底全地址分析 0x380-0x3FF 证实无直接速度字段, 全字节/16bit相关<0.22;
+            #  速度必须由距离微分得到, 物理合理: 前车靠近=负, 远离=正)
             vrel_val = 0.0
-            if sm.get('speed') is not None:
-                v_speed = _decode_vrel_speed(sm['speed'])
-                if v_speed is not None:
-                    vrel_val = v_speed
-            if vrel_val == 0.0 and sm['vRel'] is not None:
-                v_dist2 = _decode_vrel_dist2(sm['vRel'])
-                if v_dist2 is not None:
-                    vrel_val = v_dist2
-                else:
-                    vrel_val = _decode_vrel(sm['vRel'])  # V001 sub2 硬解码
-
-            # ---- V9: vRel 轻量 LPF (tau 大, 避免 V9 伪速度的过度平滑失真) ----
-            vrel_lpf = self._vrel_lpfs[sidx]
-            dt_v = self._last_ts[sidx] - self._last_ts.get(sidx, ts)
-            vrel_val = vrel_lpf.update(vrel_val, max(0.01, min(dt_v, 0.2)), self._vrel_tau())
+            if sidx in self._last_ts and self._last_ts[sidx] > 0 and sidx in self._last_drel:
+                dt_v = max(0.01, min(ts - self._last_ts[sidx], 0.3))
+                vdiff = (d - self._last_drel[sidx]) / dt_v
+                if abs(vdiff) < 25.0:  # 剔跳变
+                    self._vrel_hist.setdefault(sidx, deque(maxlen=7)).append(vdiff)
+                hist = self._vrel_hist.get(sidx)
+                if hist:
+                    vrel_val = float(np.median(list(hist)))
+            self._last_drel[sidx] = d
 
             tid = track_count + 1
             if tid not in self._pts_cache:
@@ -429,6 +429,14 @@ class RadarInterface(RadarInterfaceBase):
             pt.dRel = d
             pt.yRel = _decode_yrel(sm['yRel']) if sm['yRel'] is not None else 0.0
             pt.vRel = vrel_val
+            # ---- 2026-08-17 关键修复: measured + vLead (否则 radard 融合失效) ----
+            # measured=True: radard Track.cnt 递增, alive_tracks 非空, track 才能被选中
+            # vLead: 前车绝对速度 = 本车 + 相对 (radard vel_sane 依赖)
+            pt.measured = True
+            pt.vLead = self.v_ego + vrel_val
+            pt.aLead = 0.0
+            pt.aRel = 0.0
+            pt.yvRel = 0.0
             track_count += 1
 
         # 过期清理（目标消失 NOT_SEEN_TIMEOUT 帧后移除）
