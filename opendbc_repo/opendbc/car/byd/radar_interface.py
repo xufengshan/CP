@@ -48,6 +48,13 @@ BYD Tang DM MRR 雷达 -- 增强版 (V001 硬解码 + V9/仓库原版 KF 距离�
   纵向控制只需 dRel/yRel/vRel, 已 100% 破译, 功能完整
 
 基于 2026-08-11 多版本分析补写 (用户: "汇总优点, 编写雷达文件补充")
+
+[2026-08-17 关键修复 (真机+全量57万配对验证)]
+  - pt.measured=True: 致命, 否则 radard Track.cnt 恒0 → alive_tracks空 → 雷达从不被选中 (UI不显示)
+  - pt.vLead=v_ego+vRel: radard vel_sane 依赖
+  - vRel 改 dRel 差分+中值滤波: 全地址分析0x380-0x3FF证实无直接速度字段(相关<0.22);
+    旧 CAN 解码(0x382 dat[3]=250→饱和±35)废弃
+  - 同一目标(差<5m)12万配对: corr 0.91-0.92, 斜率0.84-0.88, RMSE~2.3m → 距离解码准确
 """
 
 import numpy as np
