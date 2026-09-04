@@ -57,7 +57,7 @@ class CarInterface(CarInterfaceBase):
         ret.dashcamOnly = False
         # 唐DM 原厂雷达 = Continental ARS4xx, 由 radar_interface 读 bus1 0x109/0x380 (CP11 已验证控车)
         ret.radarUnavailable = False
-        ret.radarTimeStep = 0.05  # 唐DM 雷达采样周期 20Hz (对齐 CP11)
+        ret.radarTimeStep = 0.04  # 唐DM 主目标 25Hz (1/25; 权威 08-18: 主25.7Hz 副15.3Hz)
 
         ret.minEnableSpeed = -1.
         ret.enableBsm = 0x418 in fingerprint[CanBus.ESC]
